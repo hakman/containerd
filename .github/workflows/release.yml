@@ -1,7 +1,7 @@
 on:
   push:
     tags:
-      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+      - 'x*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
 name: Containerd Release
 
@@ -20,33 +20,33 @@ jobs:
           ref: ${{ github.ref }}
           path: src/github.com/containerd/containerd
 
-      - name: Check signature
-        run: |
-          releasever=${{ github.ref }}
-          releasever="${releasever#refs/tags/}"
-          TAGCHECK=$(git tag -v ${releasever} 2>&1 >/dev/null) ||
-          echo "${TAGCHECK}" | grep -q "error" && {
-              echo "::error::tag ${releasever} is not a signed tag. Failing release process."
-              exit 1
-          } || {
-              echo "Tag ${releasever} is signed."
-              exit 0
-          }
-        working-directory: src/github.com/containerd/containerd
-
-      - name: Release content
-        id: contentrel
-        run: |
-          RELEASEVER=${{ github.ref }}
-          echo "::set-output name=stringver::${RELEASEVER#refs/tags/v}"
-          git tag -l ${RELEASEVER#refs/tags/} -n20000 | tail -n +3 | cut -c 5- >release-notes.md
-        working-directory: src/github.com/containerd/containerd
-
-      - name: Save release notes
-        uses: actions/upload-artifact@v2
-        with:
-          name: containerd-release-notes
-          path: src/github.com/containerd/containerd/release-notes.md
+#      - name: Check signature
+#        run: |
+#          releasever=${{ github.ref }}
+#          releasever="${releasever#refs/tags/}"
+#          TAGCHECK=$(git tag -v ${releasever} 2>&1 >/dev/null) ||
+#          echo "${TAGCHECK}" | grep -q "error" && {
+#              echo "::error::tag ${releasever} is not a signed tag. Failing release process."
+#              exit 1
+#          } || {
+#              echo "Tag ${releasever} is signed."
+#              exit 0
+#          }
+#        working-directory: src/github.com/containerd/containerd
+#
+#      - name: Release content
+#        id: contentrel
+#        run: |
+#          RELEASEVER=${{ github.ref }}
+#          echo "::set-output name=stringver::${RELEASEVER#refs/tags/v}"
+#          git tag -l ${RELEASEVER#refs/tags/} -n20000 | tail -n +3 | cut -c 5- >release-notes.md
+#        working-directory: src/github.com/containerd/containerd
+#
+#      - name: Save release notes
+#        uses: actions/upload-artifact@v2
+#        with:
+#          name: containerd-release-notes
+#          path: src/github.com/containerd/containerd/release-notes.md
 
   build:
     name: Build Release Binaries
@@ -56,7 +56,13 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-18.04, windows-2019]
+        include:
+        - os: ubuntu-18.04
+          arch: amd64
+        - os: ubuntu-18.04
+          arch: arm64
+        - os: windows-2019
+          arch: amd64
 
     steps:
       - name: Install Go
@@ -68,6 +74,7 @@ jobs:
         shell: bash
         env:
           MOS: ${{ matrix.os }}
+          MARCH: ${{ matrix.arch }}
         run: |
           releasever=${{ github.ref }}
           releasever="${releasever#refs/tags/}"
@@ -77,13 +84,43 @@ jobs:
           }
           echo "RELEASE_VER=${releasever}" >> $GITHUB_ENV
           echo "GOPATH=${{ github.workspace }}" >> $GITHUB_ENV
-          echo "OS=${os}" >> $GITHUB_ENV
+          echo "GOOS=${os}" >> $GITHUB_ENV
+          echo "GOARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+          [[ "${MARCH}" == "arm64" ]] && {
+            echo "CGO_ENABLED=1" >> $GITHUB_ENV
+            echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          }
           echo "${{ github.workspace }}/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        if: ${{ runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          if [[ "${GOARCH}" != "amd64" ]]; then
+            sudo add-apt-repository "deb [arch=arm64,s390x,ppc64el] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc) main" || true
+            sudo add-apt-repository "deb [arch=arm64,s390x,ppc64el] http://ports.ubuntu.com/ubuntu-ports/ $(lsb_release -sc)-updates main" || true
+
+            sudo dpkg --add-architecture arm64
+            sudo dpkg --add-architecture s390x
+            sudo dpkg --add-architecture ppc64el
+
+            sudo apt-get update || true
+
+            sudo apt-get install -y \
+              crossbuild-essential-arm64 \
+              crossbuild-essential-s390x \
+              crossbuild-essential-ppc64el \
+              libseccomp-dev:amd64 \
+              libseccomp-dev:arm64 \
+              libseccomp-dev:s390x \
+              libseccomp-dev:ppc64el
+          fi
 
       - name: Checkout containerd
         uses: actions/checkout@v2
         with:
-          repository: containerd/containerd
+#          repository: containerd/containerd
+          repository: hakman/containerd
           ref: ${{ github.ref }}
           path: src/github.com/containerd/containerd
 
@@ -108,22 +145,23 @@ jobs:
           make build
           make binaries
           rm bin/containerd-stress*
-          [[ "${OS}" == "windows" ]] && {
+          [[ "${GOOS}" == "windows" ]] && {
               (
                 bindir="$(pwd)/bin"
                 cd ../../Microsoft/hcsshim
                 GO111MODULE=on go build -mod=vendor -o "${bindir}/containerd-shim-runhcs-v1.exe" ./cmd/containerd-shim-runhcs-v1
               )
           }
-          TARFILE="containerd-${RELEASE_VER#v}-${OS}-amd64.tar.gz"
+          TARFILE="containerd-${RELEASE_VER#v}-${GOOS}-${GOARCH}.tar.gz"
           tar czf ${TARFILE} bin/
           sha256sum ${TARFILE} >${TARFILE}.sha256sum
+          ls -l *.tar.gz*
         working-directory: src/github.com/containerd/containerd
 
       - name: Save build binaries
         uses: actions/upload-artifact@v2
         with:
-          name: containerd-binaries-${{ matrix.os }}
+          name: containerd-binaries-${{ matrix.os }}-${{ matrix.arch }}
           path: src/github.com/containerd/containerd/*.tar.gz*
 
       - name: Make cri-containerd tar
@@ -131,16 +169,17 @@ jobs:
         env:
           RUNC_FLAVOR: runc
         run: |
-          if [[ "${OS}" == "linux" ]]; then
+          if [[ "${GOOS}" == "linux" ]]; then
             sudo PATH=$PATH script/setup/install-seccomp
           fi
           make cri-cni-release
+          ls -l releases/cri-containerd-cni-*.tar.gz*
         working-directory: src/github.com/containerd/containerd
 
       - name: Save cri-containerd binaries
         uses: actions/upload-artifact@v2
         with:
-          name: cri-containerd-binaries-${{ matrix.os }}
+          name: cri-containerd-binaries-${{ matrix.os }}-${{ matrix.arch }}
           path: src/github.com/containerd/containerd/releases/cri-containerd-cni-*.tar.gz*
 
   release:
@@ -158,7 +197,7 @@ jobs:
         id: catalog
         run: |
           _filenum=1
-          for i in "ubuntu-18.04" "windows-2019"; do
+          for i in "ubuntu-18.04-amd64" "ubuntu-18.04-arm64" "windows-2019-amd64"; do
             for f in `ls builds/containerd-binaries-${i}`; do
               echo "::set-output name=file${_filenum}::${f}"
               let "_filenum+=1"
@@ -176,78 +215,114 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           release_name: containerd ${{ needs.check.outputs.stringver }}
-          body_path: ./builds/containerd-release-notes/release-notes.md
+#          body_path: ./builds/containerd-release-notes/release-notes.md
           draft: false
-          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
-      - name: Upload Linux containerd tarball
+          prerelease: ${{ contains(github.ref, 'test') || contains(github.ref, 'rc') }}
+      - name: Upload Linux AMD64 containerd tarball
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./builds/containerd-binaries-ubuntu-18.04/${{ steps.catalog.outputs.file1 }}
+          asset_path: ./builds/containerd-binaries-ubuntu-18.04-amd64/${{ steps.catalog.outputs.file1 }}
           asset_name: ${{ steps.catalog.outputs.file1 }}
           asset_content_type: application/gzip
-      - name: Upload Linux sha256 sum
+      - name: Upload Linux AMD64 sha256 sum
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./builds/containerd-binaries-ubuntu-18.04/${{ steps.catalog.outputs.file2 }}
+          asset_path: ./builds/containerd-binaries-ubuntu-18.04-amd64/${{ steps.catalog.outputs.file2 }}
           asset_name: ${{ steps.catalog.outputs.file2 }}
           asset_content_type: text/plain
-      - name: Upload Linux cri containerd tarball
+      - name: Upload Linux AMD64 cri containerd tarball
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./builds/cri-containerd-binaries-ubuntu-18.04/${{ steps.catalog.outputs.file3 }}
+          asset_path: ./builds/cri-containerd-binaries-ubuntu-18.04-amd64/${{ steps.catalog.outputs.file3 }}
           asset_name: ${{ steps.catalog.outputs.file3 }}
           asset_content_type: application/gzip
-      - name: Upload Linux cri sha256 sum
+      - name: Upload Linux AMD64 cri sha256 sum
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./builds/cri-containerd-binaries-ubuntu-18.04/${{ steps.catalog.outputs.file4 }}
+          asset_path: ./builds/cri-containerd-binaries-ubuntu-18.04-amd64/${{ steps.catalog.outputs.file4 }}
           asset_name: ${{ steps.catalog.outputs.file4 }}
           asset_content_type: text/plain
-      - name: Upload Windows containerd tarball
+      - name: Upload Linux ARM64 containerd tarball
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./builds/containerd-binaries-windows-2019/${{ steps.catalog.outputs.file5 }}
+          asset_path: ./builds/containerd-binaries-ubuntu-18.04-arm64/${{ steps.catalog.outputs.file5 }}
           asset_name: ${{ steps.catalog.outputs.file5 }}
           asset_content_type: application/gzip
-      - name: Upload Windows sha256 sum
+      - name: Upload Linux ARM64 sha256 sum
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./builds/containerd-binaries-windows-2019/${{ steps.catalog.outputs.file6 }}
+          asset_path: ./builds/containerd-binaries-ubuntu-18.04-arm64/${{ steps.catalog.outputs.file6 }}
           asset_name: ${{ steps.catalog.outputs.file6 }}
           asset_content_type: text/plain
-      - name: Upload Windows cri containerd tarball
+      - name: Upload Linux ARM64 cri containerd tarball
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./builds/cri-containerd-binaries-windows-2019/${{ steps.catalog.outputs.file7 }}
+          asset_path: ./builds/cri-containerd-binaries-ubuntu-18.04-arm64/${{ steps.catalog.outputs.file7 }}
           asset_name: ${{ steps.catalog.outputs.file7 }}
           asset_content_type: application/gzip
-      - name: Upload Windows cri sha256 sum
+      - name: Upload Linux ARM64 cri sha256 sum
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./builds/cri-containerd-binaries-windows-2019/${{ steps.catalog.outputs.file8 }}
+          asset_path: ./builds/cri-containerd-binaries-ubuntu-18.04-arm64/${{ steps.catalog.outputs.file8 }}
           asset_name: ${{ steps.catalog.outputs.file8 }}
+          asset_content_type: text/plain
+      - name: Upload Windows AMD64 containerd tarball
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./builds/containerd-binaries-windows-2019-amd64/${{ steps.catalog.outputs.file9 }}
+          asset_name: ${{ steps.catalog.outputs.file9 }}
+          asset_content_type: application/gzip
+      - name: Upload Windows AMD64 sha256 sum
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./builds/containerd-binaries-windows-2019-amd64/${{ steps.catalog.outputs.file10 }}
+          asset_name: ${{ steps.catalog.outputs.file10 }}
+          asset_content_type: text/plain
+      - name: Upload Windows AMD64 cri containerd tarball
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./builds/cri-containerd-binaries-windows-2019-amd64/${{ steps.catalog.outputs.file11 }}
+          asset_name: ${{ steps.catalog.outputs.file11 }}
+          asset_content_type: application/gzip
+      - name: Upload Windows AMD64 cri sha256 sum
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./builds/cri-containerd-binaries-windows-2019-amd64/${{ steps.catalog.outputs.file12 }}
+          asset_name: ${{ steps.catalog.outputs.file12 }}
           asset_content_type: text/plain
