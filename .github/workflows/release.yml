@@ -20,19 +20,19 @@ jobs:
           ref: ${{ github.ref }}
           path: src/github.com/containerd/containerd
 
-      - name: Check signature
-        run: |
-          releasever=${{ github.ref }}
-          releasever="${releasever#refs/tags/}"
-          TAGCHECK=$(git tag -v ${releasever} 2>&1 >/dev/null) ||
-          echo "${TAGCHECK}" | grep -q "error" && {
-              echo "::error::tag ${releasever} is not a signed tag. Failing release process."
-              exit 1
-          } || {
-              echo "Tag ${releasever} is signed."
-              exit 0
-          }
-        working-directory: src/github.com/containerd/containerd
+#      - name: Check signature
+#        run: |
+#          releasever=${{ github.ref }}
+#          releasever="${releasever#refs/tags/}"
+#          TAGCHECK=$(git tag -v ${releasever} 2>&1 >/dev/null) ||
+#          echo "${TAGCHECK}" | grep -q "error" && {
+#              echo "::error::tag ${releasever} is not a signed tag. Failing release process."
+#              exit 1
+#          } || {
+#              echo "Tag ${releasever} is signed."
+#              exit 0
+#          }
+#        working-directory: src/github.com/containerd/containerd
 
       - name: Release content
         id: contentrel
@@ -219,7 +219,7 @@ jobs:
           release_name: containerd ${{ needs.check.outputs.stringver }}
           body_path: ./builds/containerd-release-notes/release-notes.md
           draft: false
-          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          prerelease: ${{ contains(github.ref, 'test') || contains(github.ref, 'rc') }}
       - name: Upload Linux AMD64 containerd tarball
         uses: actions/upload-release-asset@v1
         env:
