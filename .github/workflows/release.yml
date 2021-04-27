@@ -1,7 +1,7 @@
 on:
   push:
     tags:
-      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+      - 'x*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
 name: Containerd Release
 
@@ -20,33 +20,33 @@ jobs:
           ref: ${{ github.ref }}
           path: src/github.com/containerd/containerd
 
-      - name: Check signature
-        run: |
-          releasever=${{ github.ref }}
-          releasever="${releasever#refs/tags/}"
-          TAGCHECK=$(git tag -v ${releasever} 2>&1 >/dev/null) ||
-          echo "${TAGCHECK}" | grep -q "error" && {
-              echo "::error::tag ${releasever} is not a signed tag. Failing release process."
-              exit 1
-          } || {
-              echo "Tag ${releasever} is signed."
-              exit 0
-          }
-        working-directory: src/github.com/containerd/containerd
-
-      - name: Release content
-        id: contentrel
-        run: |
-          RELEASEVER=${{ github.ref }}
-          echo "::set-output name=stringver::${RELEASEVER#refs/tags/v}"
-          git tag -l ${RELEASEVER#refs/tags/} -n20000 | tail -n +3 | cut -c 5- >release-notes.md
-        working-directory: src/github.com/containerd/containerd
-
-      - name: Save release notes
-        uses: actions/upload-artifact@v2
-        with:
-          name: containerd-release-notes
-          path: src/github.com/containerd/containerd/release-notes.md
+#      - name: Check signature
+#        run: |
+#          releasever=${{ github.ref }}
+#          releasever="${releasever#refs/tags/}"
+#          TAGCHECK=$(git tag -v ${releasever} 2>&1 >/dev/null) ||
+#          echo "${TAGCHECK}" | grep -q "error" && {
+#              echo "::error::tag ${releasever} is not a signed tag. Failing release process."
+#              exit 1
+#          } || {
+#              echo "Tag ${releasever} is signed."
+#              exit 0
+#          }
+#        working-directory: src/github.com/containerd/containerd
+#
+#      - name: Release content
+#        id: contentrel
+#        run: |
+#          RELEASEVER=${{ github.ref }}
+#          echo "::set-output name=stringver::${RELEASEVER#refs/tags/v}"
+#          git tag -l ${RELEASEVER#refs/tags/} -n20000 | tail -n +3 | cut -c 5- >release-notes.md
+#        working-directory: src/github.com/containerd/containerd
+#
+#      - name: Save release notes
+#        uses: actions/upload-artifact@v2
+#        with:
+#          name: containerd-release-notes
+#          path: src/github.com/containerd/containerd/release-notes.md
 
   build:
     name: Build Release Binaries
@@ -124,7 +124,7 @@ jobs:
       - name: Checkout containerd
         uses: actions/checkout@v2
         with:
-          repository: containerd/containerd
+          repository: hakman/containerd
           ref: ${{ github.ref }}
           path: src/github.com/containerd/containerd
 
@@ -217,9 +217,9 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           release_name: containerd ${{ needs.check.outputs.stringver }}
-          body_path: ./builds/containerd-release-notes/release-notes.md
+#          body_path: ./builds/containerd-release-notes/release-notes.md
           draft: false
-          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          prerelease: ${{ contains(github.ref, 'test') || contains(github.ref, 'rc') }}
       - name: Upload Linux AMD64 containerd tarball
         uses: actions/upload-release-asset@v1
         env:
